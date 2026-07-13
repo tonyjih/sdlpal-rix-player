@@ -56,9 +56,35 @@ if(NOT FUSION_PIXEL_FONT_FILE)
 endif()
 get_filename_component(FUSION_PIXEL_FONT_FILE "${FUSION_PIXEL_FONT_FILE}" ABSOLUTE)
 
+set(_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${_generated_dir}")
+set(_generated_legacy "${_generated_dir}/generated_legacy_player.inc")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE=${CMAKE_CURRENT_LIST_DIR}/src/legacy_player.inc"
+        "-DOUTPUT=${_generated_legacy}"
+        -P "${CMAKE_CURRENT_LIST_DIR}/cmake/GeneratePlayerSource.cmake"
+    RESULT_VARIABLE _generate_result)
+if(NOT _generate_result EQUAL 0)
+    message(FATAL_ERROR "Could not generate the QoL-enabled player source")
+endif()
+
+file(READ "${CMAKE_CURRENT_LIST_DIR}/rix_player.cpp" _player_wrapper)
+string(REPLACE
+    "#include \"src/legacy_player.inc\""
+    "#include \"generated_legacy_player.inc\""
+    _player_wrapper "${_player_wrapper}")
+set(_generated_wrapper "${_generated_dir}/rix_player.cpp")
+file(WRITE "${_generated_wrapper}" "${_player_wrapper}")
+
 file(GLOB ADPLUG_C CONFIGURE_DEPENDS "${SDLPAL_ROOT}/adplug/*.c")
 file(GLOB ADPLUG_CXX CONFIGURE_DEPENDS "${SDLPAL_ROOT}/adplug/*.cpp")
-set(RIX_PLAYER_SOURCES rix_player.cpp src/legacy_player.inc track_metadata.h ${ADPLUG_C} ${ADPLUG_CXX})
+set(RIX_PLAYER_SOURCES
+    "${_generated_wrapper}"
+    "${_generated_legacy}"
+    track_metadata.h
+    ${ADPLUG_C}
+    ${ADPLUG_CXX})
 
 if(WIN32)
     enable_language(RC)
@@ -77,7 +103,7 @@ else()
     add_custom_command(TARGET sdlpal-rix-player POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FUSION_PIXEL_FONT_FILE}" "$<TARGET_FILE_DIR:sdlpal-rix-player>/${_fusion_pixel_filename}")
 endif()
 
-target_include_directories(sdlpal-rix-player PRIVATE "${CMAKE_CURRENT_LIST_DIR}" "${SDLPAL_ROOT}/sdl_compat" "${SDLPAL_ROOT}")
+target_include_directories(sdlpal-rix-player PRIVATE "${_generated_dir}" "${CMAKE_CURRENT_LIST_DIR}" "${SDLPAL_ROOT}/sdl_compat" "${SDLPAL_ROOT}")
 target_compile_definitions(sdlpal-rix-player PRIVATE USE_SDL3=1 PAL_HAS_PLATFORM_SPECIFIC_UTILS=1)
 target_compile_features(sdlpal-rix-player PRIVATE cxx_std_17)
 set_target_properties(sdlpal-rix-player PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED YES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
@@ -90,12 +116,6 @@ endif()
 target_link_libraries(sdlpal-rix-player PRIVATE ${SDL3_TARGET} ${SDL3_TTF_TARGET} Threads::Threads)
 
 if(WIN32 AND RIX_PLAYER_STATIC AND MINGW)
-    # MSYS2's static FreeType and HarfBuzz archives have a circular dependency:
-    # FreeType's auto-hinter calls hb_* APIs, while HarfBuzz can also reference
-    # FreeType integration symbols. The imported SDL3_ttf target may place the
-    # HarfBuzz import library before libfreetype.a, which GNU ld cannot resolve
-    # in a single left-to-right pass. Add the real static archives again inside
-    # a rescan group after SDL3_ttf.
     find_library(FREETYPE_STATIC_LIBRARY
         NAMES libfreetype.a
         PATHS "$ENV{MINGW_PREFIX}/lib" "${CMAKE_PREFIX_PATH}/lib"
