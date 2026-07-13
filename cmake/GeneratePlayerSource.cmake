@@ -154,6 +154,14 @@ replace_required([=[    if (!initial_path.empty()) {
     }
 ]=] "restore the last track")
 
+# SDLK_VOLUMEUP and SDLK_VOLUMEDOWN are operating-system media keys. On
+# Windows they change the master output volume regardless of the focused app.
+# Leave them to the OS and use only ordinary Up/Down for player-local gain.
+replace_required([=[            case SDLK_VOLUMEUP:
+]=] "" "leave system volume-up key to the operating system")
+replace_required([=[            case SDLK_VOLUMEDOWN:
+]=] "" "leave system volume-down key to the operating system")
+
 replace_required("engine.adjust_volume(5);" "engine.adjust_volume(1);" "one-percent volume up")
 replace_required("engine.adjust_volume(-5);" "engine.adjust_volume(-1);" "one-percent volume down")
 
