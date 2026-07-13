@@ -86,8 +86,31 @@ if(MSVC)
 else()
     target_compile_options(sdlpal-rix-player PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall;-Wextra;-fno-strict-aliasing> $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-fno-strict-aliasing>)
 endif()
+
 target_link_libraries(sdlpal-rix-player PRIVATE ${SDL3_TARGET} ${SDL3_TTF_TARGET} Threads::Threads)
+
 if(WIN32 AND RIX_PLAYER_STATIC AND MINGW)
+    # MSYS2's static FreeType and HarfBuzz archives have a circular dependency:
+    # FreeType's auto-hinter calls hb_* APIs, while HarfBuzz can also reference
+    # FreeType integration symbols. The imported SDL3_ttf target may place the
+    # HarfBuzz import library before libfreetype.a, which GNU ld cannot resolve
+    # in a single left-to-right pass. Add the real static archives again inside
+    # a rescan group after SDL3_ttf.
+    find_library(FREETYPE_STATIC_LIBRARY
+        NAMES libfreetype.a
+        PATHS "$ENV{MINGW_PREFIX}/lib" "${CMAKE_PREFIX_PATH}/lib"
+        NO_DEFAULT_PATH REQUIRED)
+    find_library(HARFBUZZ_STATIC_LIBRARY
+        NAMES libharfbuzz.a
+        PATHS "$ENV{MINGW_PREFIX}/lib" "${CMAKE_PREFIX_PATH}/lib"
+        NO_DEFAULT_PATH REQUIRED)
+
+    target_link_libraries(sdlpal-rix-player PRIVATE
+        "-Wl,--start-group"
+        "${FREETYPE_STATIC_LIBRARY}"
+        "${HARFBUZZ_STATIC_LIBRARY}"
+        "-Wl,--end-group")
+
     target_link_options(sdlpal-rix-player PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
 if(UNIX AND NOT APPLE)
