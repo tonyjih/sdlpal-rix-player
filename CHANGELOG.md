@@ -1,0 +1,14 @@
+# Changelog
+
+## 0.1.0 - 2026-07-13
+
+Initial public release.
+
+- Play `MUS.MKF` and standalone RIX files through SDLPAL's RIX/OPL code.
+- Preserve raw MKF music IDs while skipping empty entries during navigation.
+- Drag-and-drop, direct track entry, pause, loop, restart, volume, and meter.
+- Buffered SDL3 audio queue to avoid Windows crackling and underruns.
+- Automatic startup lookup beside the EXE or through `GamePath` in
+  `sdlpal.cfg`.
+- Native Windows GUI subsystem without an extra console window.
+- Self-contained static Windows build by default.

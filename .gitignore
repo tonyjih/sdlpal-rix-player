@@ -1,0 +1,30 @@
+# Build trees and generated binaries
+/build/
+/build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+build.ninja
+.ninja_deps
+.ninja_log
+*.exe
+*.dll
+*.o
+*.obj
+
+# Original game data and local configuration
+MUS.MKF
+mus.mkf
+*.rix
+sdlpal.cfg
+PAL95/
+
+# Editor and OS files
+.vscode/
+.idea/
+*.user
+.DS_Store
+Thumbs.db
+
+# Release bundles
+/dist/
