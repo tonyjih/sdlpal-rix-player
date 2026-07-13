@@ -5,23 +5,23 @@ copyright notices and license headers remain authoritative.
 
 ## SDLPAL
 
-- Project: SDLPAL
-- License: GNU General Public License version 3 or later, as applicable to the
-  individual source files
+- License: GNU General Public License version 3 or later, as applicable to the individual source files
 - Source: the SDLPAL checkout selected through `SDLPAL_ROOT`
 
 ## AdPlug and RIX player code bundled by SDLPAL
 
-- Project: AdPlug and the Softstar RIX OPL player implementation
-- License: GNU Lesser General Public License version 2.1 or later, as stated in
-  the corresponding source headers
-- Copyright notices are retained in the upstream files.
+- License: GNU Lesser General Public License version 2.1 or later, as stated in the corresponding source headers
 
-## SDL3
+## SDL3 and SDL3_ttf
 
-- Project: Simple DirectMedia Layer 3
 - License: zlib License
-- SDL3 may be linked statically into Windows release builds.
+- Both may be linked statically into Windows release builds.
 
-No Softstar game data, music, graphics, scripts, or other proprietary assets
-are included in this repository.
+## Fusion Pixel Font
+
+- Project: Fusion Pixel Font by TakWolf
+- License: SIL Open Font License 1.1
+- The 12px proportional Traditional Chinese font may be embedded into the Windows executable.
+- See `licenses/FusionPixel-OFL-1.1.txt`.
+
+No Softstar game data, music, graphics, scripts, or other proprietary assets are included in this repository.

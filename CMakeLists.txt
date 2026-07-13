@@ -1,12 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(sdlpal_rix_player VERSION 0.1.0 LANGUAGES C CXX)
+project(sdlpal_rix_player VERSION 0.2.0 LANGUAGES C CXX)
 
 set(SDLPAL_ROOT "" CACHE PATH "Path to an SDLPAL source checkout")
-
-# Convenient fallbacks:
-# 1. repository cloned as sdlpal/tools/rix-player
-# 2. SDLPAL_ROOT environment variable
-# 3. optional third_party/sdlpal checkout
 if(NOT SDLPAL_ROOT)
     get_filename_component(_embedded_candidate "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
     if(EXISTS "${_embedded_candidate}/adplug/rix.cpp")
@@ -17,110 +12,84 @@ if(NOT SDLPAL_ROOT)
         set(SDLPAL_ROOT "${CMAKE_CURRENT_LIST_DIR}/third_party/sdlpal")
     endif()
 endif()
-
 get_filename_component(SDLPAL_ROOT "${SDLPAL_ROOT}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
-foreach(_required
-        "${SDLPAL_ROOT}/adplug/rix.cpp"
-        "${SDLPAL_ROOT}/common.h"
-        "${SDLPAL_ROOT}/sdl_compat/sdl_compat.h")
+foreach(_required "${SDLPAL_ROOT}/adplug/rix.cpp" "${SDLPAL_ROOT}/common.h" "${SDLPAL_ROOT}/sdl_compat/sdl_compat.h")
     if(NOT EXISTS "${_required}")
-        message(FATAL_ERROR
-            "SDLPAL source checkout was not found.\n"
-            "Pass -DSDLPAL_ROOT=/path/to/sdlpal, set the SDLPAL_ROOT environment variable,\n"
-            "or clone this repository as sdlpal/tools/rix-player.\n"
-            "Missing: ${_required}")
+        message(FATAL_ERROR "SDLPAL source checkout was not found. Missing: ${_required}")
     endif()
 endforeach()
-
 message(STATUS "Using SDLPAL source tree: ${SDLPAL_ROOT}")
 
-# Windows defaults to a self-contained executable with SDL3 and MinGW runtimes
-# linked statically. Set -DRIX_PLAYER_STATIC=OFF for a DLL-based build.
-option(RIX_PLAYER_STATIC
-    "Build a self-contained Windows executable without sidecar runtime DLLs"
-    ${WIN32})
-
+option(RIX_PLAYER_STATIC "Build a self-contained Windows executable" ${WIN32})
 if(WIN32 AND RIX_PLAYER_STATIC)
     find_package(SDL3 CONFIG REQUIRED COMPONENTS SDL3-static)
-    if(NOT TARGET SDL3::SDL3-static)
-        message(FATAL_ERROR
-            "SDL3's static CMake target was not found. On MSYS2 UCRT64 install "
-            "mingw-w64-ucrt-x86_64-sdl3, or configure with "
-            "-DRIX_PLAYER_STATIC=OFF for a DLL-based build.")
-    endif()
+    find_package(SDL3_ttf CONFIG REQUIRED COMPONENTS SDL3_ttf-static)
     set(SDL3_TARGET SDL3::SDL3-static)
+    set(SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf-static)
 else()
-    find_package(SDL3 CONFIG QUIET)
-    if(SDL3_FOUND AND TARGET SDL3::SDL3)
-        set(SDL3_TARGET SDL3::SDL3)
-    else()
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
-        set(SDL3_TARGET PkgConfig::SDL3)
+    find_package(SDL3 CONFIG REQUIRED)
+    find_package(SDL3_ttf CONFIG REQUIRED)
+    set(SDL3_TARGET SDL3::SDL3)
+    set(SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf)
+endif()
+find_package(Threads REQUIRED)
+
+set(FUSION_PIXEL_FONT_FILE "" CACHE FILEPATH "Local Fusion Pixel 12px proportional zh_hant TTF")
+set(_fusion_pixel_filename "fusion-pixel-12px-proportional-zh_hant.ttf")
+if(NOT FUSION_PIXEL_FONT_FILE)
+    set(_font_dir "${CMAKE_BINARY_DIR}/_deps/fusion-pixel-font")
+    set(FUSION_PIXEL_FONT_FILE "${_font_dir}/${_fusion_pixel_filename}")
+    if(NOT EXISTS "${FUSION_PIXEL_FONT_FILE}")
+        file(MAKE_DIRECTORY "${_font_dir}")
+        file(DOWNLOAD
+            "https://github.com/TakWolf/fusion-pixel-font/releases/latest/download/${_fusion_pixel_filename}"
+            "${FUSION_PIXEL_FONT_FILE}"
+            STATUS _font_status TLS_VERIFY ON SHOW_PROGRESS)
+        list(GET _font_status 0 _font_code)
+        list(GET _font_status 1 _font_message)
+        if(NOT _font_code EQUAL 0)
+            file(REMOVE "${FUSION_PIXEL_FONT_FILE}")
+            message(FATAL_ERROR "Fusion Pixel download failed: ${_font_message}\nPass -DFUSION_PIXEL_FONT_FILE=/path/to/font.ttf")
+        endif()
     endif()
 endif()
-
-find_package(Threads REQUIRED)
+get_filename_component(FUSION_PIXEL_FONT_FILE "${FUSION_PIXEL_FONT_FILE}" ABSOLUTE)
 
 file(GLOB ADPLUG_C CONFIGURE_DEPENDS "${SDLPAL_ROOT}/adplug/*.c")
 file(GLOB ADPLUG_CXX CONFIGURE_DEPENDS "${SDLPAL_ROOT}/adplug/*.cpp")
-
-add_executable(sdlpal-rix-player
-    rix_player.cpp
-    ${ADPLUG_C}
-    ${ADPLUG_CXX}
-)
+set(RIX_PLAYER_SOURCES rix_player.cpp src/legacy_player.inc track_metadata.h ${ADPLUG_C} ${ADPLUG_CXX})
 
 if(WIN32)
-    set_target_properties(sdlpal-rix-player PROPERTIES WIN32_EXECUTABLE TRUE)
+    enable_language(RC)
+    set(FUSION_PIXEL_FONT_RESOURCE_ID 101)
+    file(TO_CMAKE_PATH "${FUSION_PIXEL_FONT_FILE}" FUSION_PIXEL_FONT_RC_PATH)
+    configure_file(cmake/fusion_pixel_font.rc.in "${CMAKE_CURRENT_BINARY_DIR}/fusion_pixel_font.rc" @ONLY)
+    list(APPEND RIX_PLAYER_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/fusion_pixel_font.rc")
 endif()
 
-target_include_directories(sdlpal-rix-player PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}"
-    "${SDLPAL_ROOT}/sdl_compat"
-    "${SDLPAL_ROOT}"
-)
+add_executable(sdlpal-rix-player ${RIX_PLAYER_SOURCES})
+if(WIN32)
+    set_target_properties(sdlpal-rix-player PROPERTIES WIN32_EXECUTABLE TRUE)
+    target_compile_definitions(sdlpal-rix-player PRIVATE FUSION_PIXEL_FONT_RESOURCE_ID=${FUSION_PIXEL_FONT_RESOURCE_ID})
+else()
+    target_compile_definitions(sdlpal-rix-player PRIVATE FUSION_PIXEL_FONT_FILENAME="${_fusion_pixel_filename}")
+    add_custom_command(TARGET sdlpal-rix-player POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FUSION_PIXEL_FONT_FILE}" "$<TARGET_FILE_DIR:sdlpal-rix-player>/${_fusion_pixel_filename}")
+endif()
 
-target_compile_definitions(sdlpal-rix-player PRIVATE
-    USE_SDL3=1
-    PAL_HAS_PLATFORM_SPECIFIC_UTILS=1
-)
-
+target_include_directories(sdlpal-rix-player PRIVATE "${CMAKE_CURRENT_LIST_DIR}" "${SDLPAL_ROOT}/sdl_compat" "${SDLPAL_ROOT}")
+target_compile_definitions(sdlpal-rix-player PRIVATE USE_SDL3=1 PAL_HAS_PLATFORM_SPECIFIC_UTILS=1)
 target_compile_features(sdlpal-rix-player PRIVATE cxx_std_17)
-set_target_properties(sdlpal-rix-player PROPERTIES
-    C_STANDARD 99
-    C_STANDARD_REQUIRED YES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-)
-
+set_target_properties(sdlpal-rix-player PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED YES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
 if(MSVC)
     target_compile_options(sdlpal-rix-player PRIVATE /W4 /permissive-)
-    if(WIN32 AND RIX_PLAYER_STATIC)
-        set_property(TARGET sdlpal-rix-player PROPERTY
-            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    endif()
 else()
-    target_compile_options(sdlpal-rix-player PRIVATE
-        $<$<COMPILE_LANGUAGE:C>:-Wall;-Wextra;-fno-strict-aliasing>
-        $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-fno-strict-aliasing>
-    )
+    target_compile_options(sdlpal-rix-player PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall;-Wextra;-fno-strict-aliasing> $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-fno-strict-aliasing>)
 endif()
-
-target_link_libraries(sdlpal-rix-player PRIVATE
-    ${SDL3_TARGET}
-    Threads::Threads
-)
-
+target_link_libraries(sdlpal-rix-player PRIVATE ${SDL3_TARGET} ${SDL3_TTF_TARGET} Threads::Threads)
 if(WIN32 AND RIX_PLAYER_STATIC AND MINGW)
-    target_link_options(sdlpal-rix-player PRIVATE
-        -static
-        -static-libgcc
-        -static-libstdc++
-    )
+    target_link_options(sdlpal-rix-player PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
-
 if(UNIX AND NOT APPLE)
     target_link_libraries(sdlpal-rix-player PRIVATE m)
 endif()
