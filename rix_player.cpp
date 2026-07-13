@@ -7,8 +7,12 @@
 #include <SDL3/SDL_main.h>
 #include <SDL3_ttf/SDL_ttf.h>
 #ifdef _WIN32
-# define WIN32_LEAN_AND_MEAN
-# define NOMINMAX
+# ifndef WIN32_LEAN_AND_MEAN
+#  define WIN32_LEAN_AND_MEAN
+# endif
+# ifndef NOMINMAX
+#  define NOMINMAX 1
+# endif
 # include <windows.h>
 #endif
 #include "track_metadata.h"
@@ -20,9 +24,10 @@ std::unordered_map<std::string, SDL_Texture *> cache;
 SDL_IOStream *open_font_stream() {
 #ifdef _WIN32
     HMODULE module = GetModuleHandleW(nullptr);
-    HRSRC resource = FindResourceW(module,
-                                   MAKEINTRESOURCEW(FUSION_PIXEL_FONT_RESOURCE_ID),
-                                   RT_RCDATA);
+    HRSRC resource = FindResourceW(
+        module,
+        MAKEINTRESOURCEW(FUSION_PIXEL_FONT_RESOURCE_ID),
+        MAKEINTRESOURCEW(10)); // RT_RCDATA
     if (!resource) return nullptr;
     HGLOBAL loaded = LoadResource(module, resource);
     if (!loaded) return nullptr;
