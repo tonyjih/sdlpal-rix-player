@@ -196,4 +196,239 @@ replace_required([=[    SDL_DestroyAudioStream(audio_stream);
 
 string(REPLACE "[--track N] [--no-loop]" "[--track N] [--loop|--no-loop]" player "${player}")
 
+# Generate PCM from SDL's audio-demand callback instead of the video/UI loop.
+# This prevents window rendering, text cache misses, file writes, or scheduler
+# stalls on the main thread from starving the audio device.
+replace_required([=[// Keep a healthy amount of decoded PCM queued ahead of the device. The first
+// version generated audio directly inside SDL's realtime callback and also
+// allocated a std::vector there. On some Windows systems that could miss a
+// deadline and sound like a too-small audio buffer. Manual queueing keeps all
+// OPL work and allocations on the main thread instead.
+constexpr int kAudioChunkFrames = 1024;
+constexpr int kAudioQueueTargetFrames = 8192; // About 165 ms at 49,716 Hz.
+]=] [=[// SDL asks for PCM from its audio thread as the device consumes it. Use a
+// fixed-size stack buffer in the callback so the UI thread cannot starve audio
+// and the callback never needs a dynamic allocation.
+constexpr int kAudioChunkFrames = 1024;
+constexpr int kTransitionRampFrames = std::max(1, kOplSampleRate * 5 / 1000);
+]=] "audio callback constants")
+
+# Smooth discontinuities at loop, restart, and track-change boundaries. Five
+# milliseconds is short enough to be inaudible as a fade but long enough to
+# remove the single-sample jump that causes a click.
+replace_required([=[                sample = std::max<int>(std::numeric_limits<std::int16_t>::min(),
+                                       std::min<int>(std::numeric_limits<std::int16_t>::max(),
+                                                     sample));
+                destination[output_position + i] = static_cast<std::int16_t>(sample);
+                local_peak = std::max(local_peak, std::abs(sample));
+]=] [=[                sample = std::max<int>(std::numeric_limits<std::int16_t>::min(),
+                                       std::min<int>(std::numeric_limits<std::int16_t>::max(),
+                                                     sample));
+                if (transition_frames_remaining_ > 0) {
+                    const int elapsed =
+                        kTransitionRampFrames - transition_frames_remaining_;
+                    const std::int64_t blended =
+                        static_cast<std::int64_t>(transition_start_sample_) *
+                            transition_frames_remaining_ +
+                        static_cast<std::int64_t>(sample) * elapsed;
+                    sample = static_cast<int>(blended / kTransitionRampFrames);
+                    --transition_frames_remaining_;
+                }
+                destination[output_position + i] = static_cast<std::int16_t>(sample);
+                last_output_sample_ = sample;
+                local_peak = std::max(local_peak, std::abs(sample));
+]=] "transition ramp while rendering")
+
+replace_required([=[        peak_ = std::max(peak_, local_peak);
+    }
+]=] [=[        if (ended_ && output_position < frame_count && last_output_sample_ != 0) {
+            const int fade_frames =
+                std::min(kTransitionRampFrames, frame_count - output_position);
+            for (int i = 0; i < fade_frames; ++i) {
+                const int sample = static_cast<int>(
+                    static_cast<std::int64_t>(last_output_sample_) *
+                    (fade_frames - i - 1) / fade_frames);
+                destination[output_position + i] = static_cast<std::int16_t>(sample);
+                local_peak = std::max(local_peak, std::abs(sample));
+            }
+            last_output_sample_ = 0;
+        }
+
+        peak_ = std::max(peak_, local_peak);
+    }
+]=] "natural-end fade out")
+
+replace_required([=[    void rewind_locked() {
+        if (!player_ || track_position_ < 0 ||
+            track_position_ >= static_cast<int>(tracks_.size())) {
+            return;
+        }
+        player_->rewind(tracks_[track_position_].id);
+]=] [=[    void rewind_locked() {
+        if (!player_ || track_position_ < 0 ||
+            track_position_ >= static_cast<int>(tracks_.size())) {
+            return;
+        }
+        transition_start_sample_ = last_output_sample_;
+        transition_frames_remaining_ = kTransitionRampFrames;
+        player_->rewind(tracks_[track_position_].id);
+]=] "begin ramp at playback discontinuities")
+
+replace_required([=[        peak_ = 0;
+        ended_ = false;
+        path_.clear();
+]=] [=[        peak_ = 0;
+        last_output_sample_ = 0;
+        transition_start_sample_ = 0;
+        transition_frames_remaining_ = 0;
+        ended_ = false;
+        path_.clear();
+]=] "reset transition state with decoder")
+
+replace_required([=[    int peak_ = 0;
+    int volume_ = 100;
+]=] [=[    int peak_ = 0;
+    int last_output_sample_ = 0;
+    int transition_start_sample_ = 0;
+    int transition_frames_remaining_ = 0;
+    int volume_ = 100;
+]=] "transition state members")
+
+replace_required([=[bool pump_audio(SDL_AudioStream *stream, RixEngine &engine) {
+    if (!stream) {
+        return false;
+    }
+
+    constexpr int bytes_per_frame = static_cast<int>(sizeof(std::int16_t));
+    constexpr int target_bytes = kAudioQueueTargetFrames * bytes_per_frame;
+
+    int queued_bytes = SDL_GetAudioStreamQueued(stream);
+    if (queued_bytes < 0) {
+        return false;
+    }
+
+    std::array<std::int16_t, kAudioChunkFrames> buffer{};
+    while (queued_bytes < target_bytes) {
+        const int missing_bytes = target_bytes - queued_bytes;
+        const int missing_frames =
+            std::max(1, (missing_bytes + bytes_per_frame - 1) / bytes_per_frame);
+        const int frames = std::min(kAudioChunkFrames, missing_frames);
+
+        engine.render(buffer.data(), frames);
+        const int bytes = frames * bytes_per_frame;
+        if (!SDL_PutAudioStreamData(stream, buffer.data(), bytes)) {
+            return false;
+        }
+        queued_bytes += bytes;
+    }
+
+    return true;
+}
+]=] [=[void SDLCALL audio_stream_callback(void *userdata,
+                                     SDL_AudioStream *stream,
+                                     int additional_amount,
+                                     int total_amount) {
+    (void)total_amount;
+    if (!userdata || !stream || additional_amount <= 0) {
+        return;
+    }
+
+    auto &engine = *static_cast<RixEngine *>(userdata);
+    constexpr int bytes_per_frame = static_cast<int>(sizeof(std::int16_t));
+    int remaining_frames =
+        std::max(1, (additional_amount + bytes_per_frame - 1) / bytes_per_frame);
+    std::array<std::int16_t, kAudioChunkFrames> buffer{};
+
+    while (remaining_frames > 0) {
+        const int frames = std::min(kAudioChunkFrames, remaining_frames);
+        engine.render(buffer.data(), frames);
+        if (!SDL_PutAudioStreamData(
+                stream, buffer.data(), frames * bytes_per_frame)) {
+            return;
+        }
+        remaining_frames -= frames;
+    }
+}
+]=] "on-demand SDL audio callback")
+
+replace_required([=[    // Ask SDL for a moderately large device buffer, then feed the stream from
+    // the main loop instead of generating audio in a realtime callback. SDL
+    // may adjust or ignore this hint depending on the backend.
+]=] [=[    // Ask SDL for a moderately large device buffer. PCM is supplied by the
+    // stream callback, independently of the window/event loop.
+]=] "audio setup comment")
+
+replace_required([=[    SDL_AudioStream *audio_stream = SDL_OpenAudioDeviceStream(
+        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+        &audio_spec,
+        nullptr,
+        nullptr);
+]=] [=[    SDL_AudioStream *audio_stream = SDL_OpenAudioDeviceStream(
+        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+        &audio_spec,
+        audio_stream_callback,
+        &engine);
+]=] "install the audio stream callback")
+
+replace_required([=[    const PlayerSnapshot initial_state = engine.snapshot();
+    if (initial_state.loaded && !initial_state.paused && !initial_state.ended &&
+        !pump_audio(audio_stream, engine)) {
+        std::fprintf(stderr, "Could not prefill audio stream: %s\n", SDL_GetError());
+    }
+
+]=] "" "remove main-thread audio prefill")
+
+replace_required([=[    auto reset_queued_audio = [&]() {
+        SDL_ClearAudioStream(audio_stream);
+        const PlayerSnapshot state = engine.snapshot();
+        if (state.loaded && !state.paused && !state.ended &&
+            !pump_audio(audio_stream, engine)) {
+            std::fprintf(stderr, "Could not refill audio stream: %s\n", SDL_GetError());
+        }
+        if (!state.paused) {
+            SDL_ResumeAudioStreamDevice(audio_stream);
+        }
+    };
+]=] [=[    auto reset_queued_audio = [&]() {
+        if (!SDL_ClearAudioStream(audio_stream)) {
+            std::fprintf(stderr, "Could not clear audio stream: %s\n", SDL_GetError());
+        }
+        const PlayerSnapshot state = engine.snapshot();
+        if (state.paused) {
+            SDL_PauseAudioStreamDevice(audio_stream);
+        } else {
+            SDL_ResumeAudioStreamDevice(audio_stream);
+        }
+    };
+]=] "callback-aware stream reset")
+
+replace_required([=[                } else {
+                    if (!pump_audio(audio_stream, engine)) {
+                        std::fprintf(stderr, "Could not refill audio stream: %s\n",
+                                     SDL_GetError());
+                    }
+                    SDL_ResumeAudioStreamDevice(audio_stream);
+                }
+]=] [=[                } else {
+                    SDL_ResumeAudioStreamDevice(audio_stream);
+                }
+]=] "resume callback-driven playback")
+
+replace_required([=[        PlayerSnapshot state = engine.snapshot();
+        if (state.loaded && !state.paused && !state.ended) {
+            if (!pump_audio(audio_stream, engine)) {
+                std::fprintf(stderr, "Could not queue audio data: %s\n", SDL_GetError());
+            }
+            state = engine.snapshot();
+        }
+
+]=] [=[        PlayerSnapshot state = engine.snapshot();
+
+]=] "remove main-loop audio pumping")
+
+string(REPLACE
+    "Buffered SDL3 queue + SDLPAL AdPlug DBFLT OPL2 @ 49716 Hz"
+    "SDL3 callback + SDLPAL AdPlug DBFLT OPL2 @ 49716 Hz"
+    player "${player}")
+
 file(WRITE "${OUTPUT}" "${player}")

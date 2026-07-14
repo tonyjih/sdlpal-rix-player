@@ -5,6 +5,8 @@
 - Add a Traditional Chinese UI rendered through SDL3_ttf.
 - Use Fusion Pixel Font 12px proportional `zh_hant`; embed it in Windows builds.
 - Add source-aware track metadata and display Track 086 as `酒劍仙`.
+- Feed PCM from SDL's audio-demand callback instead of the window loop.
+- Smooth loop, restart, track-change, and natural-end discontinuities.
 
 ## 0.1.0 - 2026-07-13
 
