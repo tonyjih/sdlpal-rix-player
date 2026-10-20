@@ -20,6 +20,8 @@
 namespace zh_ui {
 TTF_Font *font = nullptr;
 std::unordered_map<std::string, SDL_Texture *> cache;
+std::string status_text;
+SDL_Texture *status_texture = nullptr;
 
 SDL_IOStream *open_font_stream() {
 #ifdef _WIN32
@@ -88,8 +90,24 @@ std::string translate(const char *raw) {
 bool render(SDL_Renderer *renderer, float x, float y, const char *raw) {
     if (!ensure_font()) return SDL_RenderDebugText(renderer, x, y, raw);
     const std::string text = translate(raw);
-    const auto found = cache.find(text);
-    SDL_Texture *texture = found == cache.end() ? nullptr : found->second;
+    // Elapsed time changes every second. Keep only the latest status texture
+    // instead of permanently caching one GPU texture per timestamp.
+    const bool is_playback_status =
+        text.rfind(u8"播放中", 0) == 0 ||
+        text.rfind(u8"已暫停", 0) == 0 ||
+        text.rfind(u8"已結束", 0) == 0;
+
+    SDL_Texture *texture = nullptr;
+    if (is_playback_status) {
+        if (status_text == text) {
+            texture = status_texture;
+        }
+    } else {
+        const auto found = cache.find(text);
+        if (found != cache.end()) {
+            texture = found->second;
+        }
+    }
     if (!texture) {
         SDL_Color white{255, 255, 255, 255};
         SDL_Surface *surface = TTF_RenderText_Solid(font, text.c_str(), 0, white);
@@ -98,7 +116,15 @@ bool render(SDL_Renderer *renderer, float x, float y, const char *raw) {
         SDL_DestroySurface(surface);
         if (!texture) return false;
         SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-        cache.emplace(text, texture);
+        if (is_playback_status) {
+            if (status_texture) {
+                SDL_DestroyTexture(status_texture);
+            }
+            status_texture = texture;
+            status_text = text;
+        } else {
+            cache.emplace(text, texture);
+        }
     }
     float w = 0.0f, h = 0.0f;
     SDL_GetTextureSize(texture, &w, &h);
@@ -122,7 +148,19 @@ bool set_title(SDL_Window *window, const char *raw) {
     } else if (title.find("Drop MUS.MKF") != std::string::npos) {
         title = u8"仙劍 RIX 音樂播放器 - 請拖入 MUS.MKF";
     }
-    return SDL_SetWindowTitle(window, title.c_str());
+    // The UI loop calls this every frame, but the title only changes on
+    // track/pause changes. Avoid repeatedly calling the window system.
+    static SDL_Window *last_window = nullptr;
+    static std::string last_title;
+    if (last_window == window && last_title == title) {
+        return true;
+    }
+    if (!SDL_SetWindowTitle(window, title.c_str())) {
+        return false;
+    }
+    last_window = window;
+    last_title = title;
+    return true;
 }
 } // namespace zh_ui
 
