@@ -1068,7 +1068,7 @@ int main(int argc, char **argv) {
                 SDL_UnlockAudioStream(audio_stream);
 
                 // A successful drop starts the new track. If loading fails,
-                // restore the previous device pause state and keep old audio.
+                // restore the previous device pause state.
                 if (loaded || !was_paused) {
                     if (!SDL_ResumeAudioStreamDevice(audio_stream)) {
                         std::fprintf(stderr, "Could not resume audio after file drop: %s\n",
