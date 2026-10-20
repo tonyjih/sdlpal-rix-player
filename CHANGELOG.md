@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve OPL state and fractional RIX tick timing across natural music loops.
+- Reuse a single texture for the changing playback clock/status text.
+- Avoid redundant window-title updates on every rendered frame.
 - Add a Traditional Chinese UI rendered through SDL3_ttf.
 - Use Fusion Pixel Font 12px proportional `zh_hant`; embed it in Windows builds.
 - Add source-aware track metadata and display Track 086 as `酒劍仙`.

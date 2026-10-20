@@ -473,7 +473,12 @@ public:
                         ended_ = true;
                         break;
                     }
-                    rewind_locked();
+                    // Preserve OPL envelopes at a natural RIX loop boundary.
+                    // Unlike explicit track changes, looping should not
+                    // reinitialize the chip or reset the fractional tick clock.
+                    player_->rewindReInit(tracks_[track_position_].id, false);
+                    elapsed_frames_ = 0;
+                    peak_ = 0;
                     if (!player_->update()) {
                         ended_ = true;
                         error_ = "The selected RIX entry ended immediately.";
