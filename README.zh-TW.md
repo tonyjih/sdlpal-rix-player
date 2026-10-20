@@ -34,6 +34,7 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-cmake \
   mingw-w64-ucrt-x86_64-ninja \
   mingw-w64-ucrt-x86_64-sdl3 \
+  mingw-w64-ucrt-x86_64-sdl3-ttf \
   mingw-w64-ucrt-x86_64-pkgconf
 ```
 
@@ -65,6 +66,14 @@ cmake --build build
 
 ```text
 build/sdlpal-rix-player.exe
+```
+
+首次設定時，CMake 會從 Fusion Pixel Font 的 2026.10.16 Release 下載
+已驗證 SHA-256 的 TTF ZIP，解壓出繁中字型並嵌入 Windows EXE。
+若需要離線編譯，可手動提供字型檔，並在上方 CMake 指令加上：
+
+```sh
+-DFUSION_PIXEL_FONT_FILE=D:/fonts/fusion-pixel-12px-proportional-zh_hant.ttf
 ```
 
 ## 啟動時自動找檔

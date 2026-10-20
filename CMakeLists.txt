@@ -42,16 +42,34 @@ if(NOT FUSION_PIXEL_FONT_FILE)
     set(FUSION_PIXEL_FONT_FILE "${_font_dir}/${_fusion_pixel_filename}")
     if(NOT EXISTS "${FUSION_PIXEL_FONT_FILE}")
         file(MAKE_DIRECTORY "${_font_dir}")
+        # Upstream ships versioned ZIP archives rather than individual TTF
+        # release assets. Pin the archive and its digest for reproducible builds.
+        set(_font_version "2026.10.16")
+        set(_font_archive_name "fusion-pixel-font-12px-proportional-ttf-v${_font_version}.zip")
+        set(_font_archive "${_font_dir}/${_font_archive_name}")
         file(DOWNLOAD
-            "https://github.com/TakWolf/fusion-pixel-font/releases/latest/download/${_fusion_pixel_filename}"
-            "${FUSION_PIXEL_FONT_FILE}"
+            "https://github.com/TakWolf/fusion-pixel-font/releases/download/${_font_version}/${_font_archive_name}"
+            "${_font_archive}"
+            EXPECTED_HASH "SHA256=6dd1c8415c829a94aff70e0d24c9a154037bd9bc42cfea77448eac0a2a81c00f"
             STATUS _font_status TLS_VERIFY ON SHOW_PROGRESS)
         list(GET _font_status 0 _font_code)
         list(GET _font_status 1 _font_message)
         if(NOT _font_code EQUAL 0)
-            file(REMOVE "${FUSION_PIXEL_FONT_FILE}")
-            message(FATAL_ERROR "Fusion Pixel download failed: ${_font_message}\nPass -DFUSION_PIXEL_FONT_FILE=/path/to/font.ttf")
+            file(REMOVE "${_font_archive}")
+            message(FATAL_ERROR "Fusion Pixel archive download failed: ${_font_message}\nPass -DFUSION_PIXEL_FONT_FILE=/path/to/font.ttf")
         endif()
+
+        set(_font_extracted_dir "${_font_dir}/extracted")
+        file(MAKE_DIRECTORY "${_font_extracted_dir}")
+        file(ARCHIVE_EXTRACT INPUT "${_font_archive}" DESTINATION "${_font_extracted_dir}")
+        file(GLOB_RECURSE _font_candidates LIST_DIRECTORIES FALSE
+            "${_font_extracted_dir}/${_fusion_pixel_filename}")
+        list(LENGTH _font_candidates _font_count)
+        if(_font_count LESS 1)
+            message(FATAL_ERROR "Fusion Pixel archive did not contain ${_fusion_pixel_filename}")
+        endif()
+        list(GET _font_candidates 0 _font_source)
+        configure_file("${_font_source}" "${FUSION_PIXEL_FONT_FILE}" COPYONLY)
     endif()
 endif()
 get_filename_component(FUSION_PIXEL_FONT_FILE "${FUSION_PIXEL_FONT_FILE}" ABSOLUTE)
