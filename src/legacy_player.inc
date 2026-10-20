@@ -1035,8 +1035,45 @@ int main(int argc, char **argv) {
 
             if (event.type == SDL_EVENT_DROP_FILE && event.drop.data) {
                 numeric_input.clear();
-                if (engine.load(event.drop.data)) {
-                    reset_queued_audio();
+                const std::string dropped_path(event.drop.data);
+
+                // Startup loads the decoder before audio begins, but a drop
+                // replaces it while SDL's get callback is already running.
+                // Suspend playback first so file I/O and OPL initialization
+                // cannot starve the realtime audio thread.
+                const bool was_paused = SDL_AudioStreamDevicePaused(audio_stream);
+                if (!SDL_PauseAudioStreamDevice(audio_stream)) {
+                    std::fprintf(stderr, "Could not pause audio for file drop: %s\n",
+                                 SDL_GetError());
+                    continue;
+                }
+
+                // SDL holds the audio stream lock while invoking the callback.
+                // Serializing the load and clear with that callback also
+                // prevents stale PCM from either decoder reaching playback.
+                if (!SDL_LockAudioStream(audio_stream)) {
+                    std::fprintf(stderr, "Could not lock audio for file drop: %s\n",
+                                 SDL_GetError());
+                    if (!was_paused) {
+                        SDL_ResumeAudioStreamDevice(audio_stream);
+                    }
+                    continue;
+                }
+
+                const bool loaded = engine.load(dropped_path);
+                if (loaded && !SDL_ClearAudioStream(audio_stream)) {
+                    std::fprintf(stderr, "Could not clear audio after file drop: %s\n",
+                                 SDL_GetError());
+                }
+                SDL_UnlockAudioStream(audio_stream);
+
+                // A successful drop starts the new track. If loading fails,
+                // restore the previous device pause state and keep old audio.
+                if (loaded || !was_paused) {
+                    if (!SDL_ResumeAudioStreamDevice(audio_stream)) {
+                        std::fprintf(stderr, "Could not resume audio after file drop: %s\n",
+                                     SDL_GetError());
+                    }
                 }
                 continue;
             }
